@@ -1,0 +1,159 @@
+
+---
+title: "Practical machine learning course report"
+output: html_document
+---
+============================
+
+*****Alexa Kiss*****
+
+This is a homework assignment of Coursera’s MOOC Practical Machine Learning from Johns Hopkins University. For more information about the MOOCs in this Specialization, please visit: https://www.coursera.org/specialization/jhudatascience/
+ 
+### Summary
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly. One thing that people often do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+### Aim
+In this project, I have used data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants in order to predict in which manner they have performed the excercise.
+
+### Data source and experimental details
+Weight lifting excercises dataset
+
+"Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate."
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3s9NNDsSK
+
+
+### Loading and cleaning data
+
+```{r ,echo=FALSE, warning=FALSE}
+
+
+# loading required packages
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+
+# system information and R version for future reproduction
+Sys.info()[1:2]
+R.version.string
+```
+
+```{r, cache=TRUE}
+#  setting seed and downloading data
+set.seed(123)
+
+trainURL <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testURL <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+traindata <- read.csv(url(trainURL), na.strings=c("NA","#DIV/0!",""))
+testdata <- read.csv(url(testURL), na.strings=c("NA","#DIV/0!",""))
+```
+
+```{r}
+NAsums <- function(x) sum(is.na(x))
+NAvari <- sapply(traindata, NAsums)
+sum(NAvari == 0)
+```
+Upon viewing the dataset, it appears, that most of the variables contain a large amount of NaNs. As missing values can cause most classification models to fail, and these variables represent summary statistics, they will be removed.
+
+```{r}
+rem<-which(colSums(is.na(traindata))>1000)
+traindata<-traindata[, -rem]
+dim(traindata)
+```
+
+Near-zero variance predictors may also cause model failure, it is better to get rid of them.
+
+```{r}
+nzv<- nearZeroVar(traindata,saveMetrics=TRUE)
+traindata <- traindata[,nzv$nzv==FALSE]
+
+dim(traindata)
+```
+59 variables remain. However, the goal is to produce an algorithm that can tell whether an unknown user is performing an exercise well or not. There are still variables left that won’t help with this: the ‘X’ sample number, user name and the timestamp details.
+
+```{r}
+traindata<-traindata[,-(1:6),drop=FALSE]
+dim(traindata)
+```
+
+###  Data partitioning and training
+
+I will use cross-validation, using 75% of the data for training.
+```{r}
+dataparts<- createDataPartition(traindata$classe, p=0.75, list=FALSE)
+training <- traindata[dataparts, ]
+validation <- traindata[-dataparts, ]
+dim(training); dim(validation)
+# check the proportion of the different classes after data splitting
+prop.table(table(traindata$classe))
+prop.table(table(training$classe))
+
+```
+
+First, I apply a decision tree:
+```{r}
+model1 <- rpart(classe ~ ., data=training, method="class")
+plot(model1, uniform=FALSE,
+   main="Decision tree of weight lifting data ")
+text(model1, use.n=FALSE, all=TRUE, cex=.6)
+
+prediction1 <- predict(model1, validation, type = "class")
+CMmodel1 <- confusionMatrix(prediction1, validation$classe)
+CMmodel1
+```
+Note that the prediction of the validation dataset is not very accurate ( Accuracy : 0.7486          
+and 95% CI : (0.7362, 0.7607)). Using this model, we would expect a 0.25 out-of-sample error.
+
+Next, I will use random forest:
+Some advantages of this method: high accuracy, no variable transformation needed, results are relatively easy to interpret (e.g. using variable importance).
+
+```{r}
+model2 <- randomForest(classe ~ ., data=training)
+prediction2 <- predict(model2, validation, type = "class")
+CMmodel2 <- confusionMatrix(prediction2, validation$classe)
+CMmodel2
+
+# plot the important variables
+varImpPlot(model2, main="Random forest of weight lifting data", cex=1.2)
+
+```
+
+
+Clearly, random forest yields higher accuracy then the previous case, the expected out-of-sample error is <0.01.
+
+### Final prediction
+
+Finally, I use the selected method to predict the manner of weight lifting in the 20 events of test data.
+
+```{r}
+
+answers<-predict(model2,testdata, type="class")
+answers1<-as.character(answers)
+
+
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(answers1)
+
+```
+Note: The model succesfully classified all of the test dataset, with high accuracy. However, based on the variable importance plot (i.e. after the first 10-15 variables not much change occurs), decreasing the number of predictors may yield further improvements (e.g. in interpretability and in terms computational costs). For example, the number of predictors may be reduced by removing variables of highly correlated variable pairs, or performing PCA in the preprocessing step.
+
+## References
+1. http://groupware.les.inf.puc-rio.br/har
+
+2. Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6.
+
+3. Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+4. http://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm#ooberr
+
